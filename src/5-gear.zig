@@ -3,33 +3,32 @@ const print = std.debug.print;
 const ArrayList = std.ArrayList;
 
 const LINE_LEN = 140;
+// const LINE_LEN = 10;
 
 const Pointer = struct {
-    start: u8,
-    end: u8,
+    number: usize,
+    start: usize,
+    end: usize,
 };
 
 pub fn main() !void {
-    const file = try std.fs.cwd().openFile("./files/3-gears-mini", .{});
+    const file = try std.fs.cwd().openFile("./files/3-gears", .{});
     defer file.close();
 
-    var buf: [3 * LINE_LEN]u8 = undefined;
+    var buf: [LINE_LEN]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
-    var array_buf: [1000]u8 = undefined;
+    var array_buf: [3000000]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&array_buf);
     const allocator = fba.allocator();
 
-    var symbols = ArrayList(u8).init(allocator);
+    var symbols = ArrayList(usize).init(allocator);
     defer symbols.deinit();
-
-    var gears = ArrayList(u8).init(allocator);
-    defer gears.deinit();
 
     var number_slices = ArrayList(Pointer).init(allocator);
     defer number_slices.deinit();
 
-    var number = ArrayList(u16).init(allocator);
+    var number = ArrayList(usize).init(allocator);
     defer number.deinit();
 
     var row: usize = 0;
@@ -38,48 +37,35 @@ pub fn main() !void {
             print("{}\n", .{e});
             break;
         };
-        print("{s}\n", .{buf});
+        // print("{s}\n", .{buf});
+        try parse_line(&buf, row, &symbols, &number_slices);
+        fbs.reset();
         row += 1;
-        if (row % 3 == 0) {
-            const l1 = buf[LINE_LEN * 0 .. LINE_LEN * 1];
-            const l2 = buf[LINE_LEN * 1 .. LINE_LEN * 2];
-            const l3 = buf[LINE_LEN * 2 .. LINE_LEN * 3];
-
-            // whenever we get here, we have 3 full buffers;
-            // check l1 symbols
-            try parse_line(l1, &symbols, &number_slices);
-            print("l1: {any} | numbers: {any}\n", .{ symbols.items, number_slices.items });
-            // inline_neighbors(symbols, l1);
-            // forward_neighbors(s_buf, l1, l2);
-            symbols.clearRetainingCapacity();
-
-            // check b2-> b1 | b3
-            try parse_line(l2, &symbols, &number_slices);
-            print("l2: {any}\n", .{symbols.items});
-            // backward_neighbors(s_buf, l2, l1);
-            // inline_neighbors(s_buf, l2);
-            // forward_neighbors(s_buf, l2, l3);
-            symbols.clearRetainingCapacity();
-
-            // check b3-> b2
-            try parse_line(l3, &symbols, &number_slices);
-            print("l3: {any}\n", .{symbols.items});
-            // backward_neighbors(s_buf, l3, l2);
-            symbols.clearRetainingCapacity();
-            fbs.reset();
-            break;
-        }
     }
+    // print("numbers: {any}\n", .{number_slices.items});
+    // print("symbols: {any}\n", .{symbols.items});
+    try neighbors(&number_slices, &symbols, &number);
+    print("gears: {any}\n", .{number.items});
+    var total: usize = 0;
+    for (number.items) |n| total += n;
+    print("total: {any}\n", .{total});
 }
 
-fn parse_line(line: []u8, sym: *ArrayList(u8), num: *ArrayList(Pointer)) !void {
+/// Builds a list of symbols and numbers for the buffer
+fn parse_line(line: []u8, row: usize, sym: *ArrayList(usize), num: *ArrayList(Pointer)) !void {
     var start: ?usize = null;
     var end: ?usize = null;
     for (line, 0..LINE_LEN) |c, index| {
         if (c == '.') {
             if (start) |s| {
                 if (end) |e| {
-                    try num.append(Pointer{ .start = @intCast(s), .end = @intCast(e) });
+                    // print("numb: {s}\n", .{line[s..e]});
+                    const numb = try std.fmt.parseUnsigned(usize, line[s..e], 0);
+                    try num.append(Pointer{
+                        .number = numb,
+                        .start = s + row * LINE_LEN,
+                        .end = e + row * LINE_LEN,
+                    });
                 } else return error.SliceMalFormed;
                 start = null;
                 end = null;
@@ -95,6 +81,53 @@ fn parse_line(line: []u8, sym: *ArrayList(u8), num: *ArrayList(Pointer)) !void {
             }
             continue;
         }
-        try sym.append(@intCast(index));
+        // if not '.' nor number, then it is a symbol
+        try sym.append(index + row * LINE_LEN);
+        // is symbol comes right after a numer, we also need to register the number
+        if (start) |s| {
+            if (end) |e| {
+                // print("numb: {s}\n", .{line[s..e]});
+                const numb = try std.fmt.parseUnsigned(usize, line[s..e], 0);
+                try num.append(Pointer{
+                    .number = numb,
+                    .start = s + row * LINE_LEN,
+                    .end = e + row * LINE_LEN,
+                });
+            } else return error.SliceMalFormed;
+            start = null;
+            end = null;
+        }
+    }
+}
+
+fn neighbors(num: *ArrayList(Pointer), sym: *ArrayList(usize), res: *ArrayList(usize)) !void {
+    num_loop: for (num.items) |n| {
+        //inline: symbol can be left or right
+        const left = @subWithOverflow(n.start, 1)[0];
+        const right = n.end;
+        for (sym.items) |s| {
+            if (s == left or s == right) {
+                try res.append(n.number);
+                continue :num_loop;
+            }
+            // if (s > right) break;
+        }
+
+        // if not inline, we check above or below:
+        for (n.start..n.end) |p| {
+            for (sym.items) |s| {
+                if (s == @subWithOverflow(p, LINE_LEN - 1)[0] or
+                    s == @subWithOverflow(p, LINE_LEN)[0] or
+                    s == @subWithOverflow(p, LINE_LEN + 1)[0] or
+                    s == p + LINE_LEN - 1 or
+                    s == p + LINE_LEN or
+                    s == p + LINE_LEN + 1)
+                {
+                    try res.append(n.number);
+                    continue :num_loop;
+                }
+                // if (s > p + LINE_LEN + 1) break;
+            }
+        }
     }
 }
