@@ -11,6 +11,13 @@ const Pointer = struct {
     end: usize,
 };
 
+const Symbol = struct {
+    index: usize,
+    l_number: ?usize,
+    r_number: ?usize,
+    is_gear: bool,
+};
+
 pub fn main() !void {
     const file = try std.fs.cwd().openFile("./files/3-gears", .{});
     defer file.close();
@@ -22,7 +29,7 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(&array_buf);
     const allocator = fba.allocator();
 
-    var symbols = ArrayList(usize).init(allocator);
+    var symbols = ArrayList(Symbol).init(allocator);
     defer symbols.deinit();
 
     var number_slices = ArrayList(Pointer).init(allocator);
@@ -38,7 +45,6 @@ pub fn main() !void {
             break;
         };
 
-        // try parse_line(&buf, row, &symbols, &number_slices);
         try parse_symbol(&buf, row, &symbols);
         try parse_number(&buf, row, &number_slices);
         fbs.reset();
@@ -47,16 +53,22 @@ pub fn main() !void {
 
     try neighbors(&number_slices, &symbols, &number);
     var total: usize = 0;
-    for (number.items) |n| total += n;
-    print("gears: {any}\n", .{number.items});
+    for (symbols.items) |s| {
+        if (s.is_gear) total += s.l_number.? * s.r_number.?;
+    }
     print("total: {any}\n", .{total});
 }
 
-fn parse_symbol(line: []u8, row: usize, sym: *ArrayList(usize)) !void {
+fn parse_symbol(line: []u8, row: usize, sym: *ArrayList(Symbol)) !void {
     for (line, 0..LINE_LEN) |c, index| {
         if (c == '.') continue;
         if (std.ascii.isDigit(c)) continue;
-        try sym.append(index + row * LINE_LEN);
+        try sym.append(Symbol{
+            .index = index + row * LINE_LEN,
+            .l_number = null,
+            .r_number = null,
+            .is_gear = false,
+        });
     }
 }
 
@@ -95,32 +107,48 @@ fn set_number(num: *ArrayList(Pointer), start: ?usize, end: ?usize, line: []u8, 
     }
 }
 
-fn neighbors(num: *ArrayList(Pointer), sym: *ArrayList(usize), res: *ArrayList(usize)) !void {
+fn add_number(sym: *Symbol, numb: Pointer) void {
+    if (sym.r_number) |_| {
+        sym.is_gear = false;
+        return;
+    }
+    if (sym.l_number) |_| {
+        sym.r_number = numb.number;
+        sym.is_gear = true;
+        return;
+    }
+    sym.l_number = numb.number;
+    return;
+}
+
+fn neighbors(num: *ArrayList(Pointer), sym: *ArrayList(Symbol), res: *ArrayList(usize)) !void {
     num_loop: for (num.items) |n| {
         const left = @subWithOverflow(n.start, 1)[0];
         const right = n.end;
-        for (sym.items) |s| {
-            if (s == left or s == right) {
+        for (sym.items) |*s| {
+            if (s.index == left or s.index == right) {
                 try res.append(n.number);
+                add_number(s, n);
                 continue :num_loop;
             }
-            if (s > right) break;
+            if (s.index > right) break;
         }
 
         // if not inline, we check above or below:
         for (n.start..n.end) |p| {
-            for (sym.items) |s| {
-                if (s == @subWithOverflow(p, LINE_LEN - 1)[0] or
-                    s == @subWithOverflow(p, LINE_LEN)[0] or
-                    s == @subWithOverflow(p, LINE_LEN + 1)[0] or
-                    s == p + LINE_LEN - 1 or
-                    s == p + LINE_LEN or
-                    s == p + LINE_LEN + 1)
+            for (sym.items) |*s| {
+                if (s.index == @subWithOverflow(p, LINE_LEN - 1)[0] or
+                    s.index == @subWithOverflow(p, LINE_LEN)[0] or
+                    s.index == @subWithOverflow(p, LINE_LEN + 1)[0] or
+                    s.index == p + LINE_LEN - 1 or
+                    s.index == p + LINE_LEN or
+                    s.index == p + LINE_LEN + 1)
                 {
                     try res.append(n.number);
+                    add_number(s, n);
                     continue :num_loop;
                 }
-                if (s > p + LINE_LEN + 1) break;
+                if (s.index > p + LINE_LEN + 1) break;
             }
         }
     }
